@@ -280,8 +280,12 @@ public class PushServlet extends HttpServlet {
 		for (String peopleId : peopleIds) {
 			List<PushExecutor> list = executorMap.get(peopleId);
 			if (list == null) {
-				list = new ArrayList<PushExecutor>();
-				executorMap.put(peopleId, list);
+				synchronized (executorMap) {
+					if (null == executorMap.get(peopleId)) { // double check
+						list = new ArrayList<PushExecutor>();
+						executorMap.put(peopleId, list);
+					}
+				}
 			}
 			synchronized (list) {
 				list.add(exe);
