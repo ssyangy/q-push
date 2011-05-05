@@ -75,15 +75,14 @@ public class PushServlet extends HttpServlet {
 									@Override
 									public void onMessage(String channel, String message) {
 										try {
-											// message[type:peopleId,content]
-											String[] items = StringUtils.split(message, ":", 3);
-											// String type = items[0];
+											// message[peopleId content]
+											String[] items = StringUtils.split(message, " ", 2);
 											if ("weibo".equals(channel)) { // 1 identified weibo
-												String weiboSenderId = items[1];
+												String weiboSenderId = items[0];
 												// String weiboContent = items[2];
 												pushWeibo(weiboSenderId);
-											} else if ("reply".equals(channel)) {
-												String quoteSenderId = items[1];
+											} else if ("weiboReply".equals(channel)) {
+												String quoteSenderId = items[0];
 												// String replyContent = items[2];
 												pushWeiboReply(quoteSenderId);
 											}
@@ -92,7 +91,7 @@ public class PushServlet extends HttpServlet {
 										}
 									}
 
-								}, "weibo", "reply", "message", "at");
+								}, "weibo", "weiboReply", "message", "messageReply", "at");
 					} catch (Exception e) {
 						log.error("subscribe fail", e);
 					}
@@ -112,8 +111,8 @@ public class PushServlet extends HttpServlet {
 	}
 
 	private void pushWeiboReply(String quoteSenderId) {
-		int repliedNumber = cacheJedis.incr("reply " + quoteSenderId);
-		push("mine", quoteSenderId, "reply new " + repliedNumber + "\n", false);
+		int repliedNumber = cacheJedis.incr("weiboReply " + quoteSenderId);
+		push("mine", quoteSenderId, "weiboReply new " + repliedNumber + "\n", false);
 
 	}
 
