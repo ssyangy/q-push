@@ -1,0 +1,55 @@
+接收他人微博的通知:
+curl -v -H "Accept:application/json" -d "peopleIds=11,22,33&cmd=weibo&aliveTime=180000" "http://192.168.1.200:8888/push/"
+< HTTP/1.1 200 OK
+< Content-Type: application/json;charset=UTF-8
+< Transfer-Encoding: chunked
+< Server: Jetty(8.0.0.M2)
+< 
+weibo new
+* Connection #0 to host localhost left intact
+* Closing connection #0
+
+
+接收某人的通知:
+curl -v -H "Accept:application/json" -d "peopleIds=11&cmd=mine&aliveTime=180000" "http://192.168.1.200:8888/push/"
+< HTTP/1.1 200 OK
+< Content-Type: application/json;charset=UTF-8
+< Transfer-Encoding: chunked
+< Server: Jetty(8.0.0.M2)
+< 
+reply new 11
+reply new 12
+message new 2
+at new 3
+
+参数说明:
+1)aliveTime(ms): 
+	服务端认为该链接的存活时间,范围30000ms~300000ms.
+2)cmd:
+	推送内容.
+	取值:
+		weibo 接收是否有新微博; 
+		mine 接收私信, @, 回复新条数的通知.
+    注意:
+    	如果cmd=weibo,服务端推送weibo new后立即关闭. 
+    	如果cmd=mine,服务端在有效aliveTime内持续推送.
+    	
+程序打包:
+1)修改用户目录下文件q.push.properties内的配置参数.
+q.push.logRoot=/Users/alin/Documents/workspace/logs/q-push
+q.push.logLevel=debug
+q.push.cache.host=192.168.1.100
+q.push.cache.port=6379
+q.push.cache.timeout=200
+q.push.sub.host=192.168.1.100
+q.push.sub.port=6379
+q.push.sub.timeout=200
+
+2)mvn clean package
+
+程序安装:
+1)安装tomcat7+
+修改配置文件server.xml:
+
+1)拷贝target/push.war到tomcat web应用目录
+

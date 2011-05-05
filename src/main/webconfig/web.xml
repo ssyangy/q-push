@@ -28,6 +28,18 @@
 		<servlet-class>cn.com.q.push.servlet.PushServlet</servlet-class>
 		<async-supported>true</async-supported>
 		<init-param>
+			<param-name>subHost</param-name>
+			<param-value>${q.push.sub.host}</param-value>
+		</init-param>
+		<init-param>
+			<param-name>subPort</param-name>
+			<param-value>${q.push.sub.port}</param-value>
+		</init-param>
+		<init-param>
+			<param-name>subTimeout</param-name>
+			<param-value>${q.push.sub.timeout}</param-value>
+		</init-param>
+		<init-param>
 			<param-name>cacheHost</param-name>
 			<param-value>${q.push.cache.host}</param-value>
 		</init-param>
@@ -38,7 +50,7 @@
 		<init-param>
 			<param-name>cacheTimeout</param-name>
 			<param-value>${q.push.cache.timeout}</param-value>
-		</init-param>
+		</init-param>		
 		<load-on-startup>4</load-on-startup>
 	</servlet>
 	<!-- ====================================================== -->
@@ -46,7 +58,7 @@
 	<!-- ====================================================== -->
 	<servlet-mapping>
 		<servlet-name>push</servlet-name>
-		<url-pattern>/weibo</url-pattern>
+		<url-pattern>/</url-pattern>
 	</servlet-mapping>
 
 	<!-- ====================================================== -->
