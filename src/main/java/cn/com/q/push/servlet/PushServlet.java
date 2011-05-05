@@ -42,6 +42,8 @@ public class PushServlet extends HttpServlet {
 	private Jedis subJedis = null;
 
 	private Jedis cacheJedis = null;
+	
+	
 
 	@Override
 	public void init() throws ServletException {
@@ -49,12 +51,8 @@ public class PushServlet extends HttpServlet {
 		String subHost = config.getInitParameter("subHost");
 		int subPort = Integer.valueOf(config.getInitParameter("subPort"));
 		int subTimeout = Integer.valueOf(config.getInitParameter("subTimeout"));
-		subJedis = new Jedis(subHost, subPort, subTimeout);
-		try {
-			subJedis.connect();
-		} catch (IOException e) {
-			throw new ServletException(e);
-		}
+		this.subJedis = new Jedis(subHost, subPort, subTimeout);
+		
 		final AtomicInteger tryTimes = new AtomicInteger();
 		new Thread(new Runnable() {
 
@@ -111,7 +109,7 @@ public class PushServlet extends HttpServlet {
 	}
 
 	private void pushWeiboReply(String quoteSenderId) {
-		int repliedNumber = cacheJedis.incr("weiboReply " + quoteSenderId);
+		Long repliedNumber = cacheJedis.incr("weiboReply " + quoteSenderId);
 		push("mine", quoteSenderId, "weiboReply new " + repliedNumber + "\n", false);
 
 	}
