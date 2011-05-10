@@ -9,6 +9,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import javax.servlet.AsyncContext;
 import javax.servlet.AsyncEvent;
@@ -24,6 +26,7 @@ import org.apache.log4j.Logger;
 import org.springframework.util.CollectionUtils;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.exceptions.JedisConnectionException;
 
 /**
  * @author seanlinwang at gmail dot com
@@ -40,19 +43,31 @@ public class PushServlet extends HttpServlet {
 	private static final int MIN_ALIVE_TIME = 30 * 1000;// min alive minute
 
 	private Jedis subJedis = null;
+	private Lock resetSubJedisLock = new ReentrantLock();
 
 	private Jedis cacheJedis = null;
-	
-	
+	private Lock resetCacheJedisLock = new ReentrantLock();
+
+	String subHost;
+
+	int subPort;
+
+	int subTimeout;
+
+	String cacheHost;
+
+	int cachePort;
+
+	int cacheTimeout;
 
 	@Override
 	public void init() throws ServletException {
 		ServletConfig config = this.getServletConfig();
-		String subHost = config.getInitParameter("subHost");
-		int subPort = Integer.valueOf(config.getInitParameter("subPort"));
-		int subTimeout = Integer.valueOf(config.getInitParameter("subTimeout"));
-		this.subJedis = new Jedis(subHost, subPort, subTimeout);
-		
+		subHost = config.getInitParameter("subHost");
+		subPort = Integer.valueOf(config.getInitParameter("subPort"));
+		subTimeout = Integer.valueOf(config.getInitParameter("subTimeout"));
+		subJedis = createSubJedis();
+
 		final AtomicInteger tryTimes = new AtomicInteger();
 		new Thread(new Runnable() {
 
@@ -90,8 +105,11 @@ public class PushServlet extends HttpServlet {
 									}
 
 								}, "weibo", "weiboReply", "message", "messageReply", "at");
+					} catch (JedisConnectionException e) {
+						log.error("JedisException", e);
+						reinitSubJedis();
 					} catch (Exception e) {
-						log.error("subscribe fail", e);
+						log.error("", e);
 					}
 					try {
 						Thread.sleep(500);
@@ -102,15 +120,27 @@ public class PushServlet extends HttpServlet {
 			}
 		}).start();
 
-		String cacheHost = config.getInitParameter("cacheHost");
-		int cachePort = Integer.valueOf(config.getInitParameter("cachePort"));
-		int cacheTimeout = Integer.valueOf(config.getInitParameter("cacheTimeout"));
-		this.cacheJedis = new Jedis(cacheHost, cachePort, cacheTimeout);
+		cacheHost = config.getInitParameter("cacheHost");
+		cachePort = Integer.valueOf(config.getInitParameter("cachePort"));
+		cacheTimeout = Integer.valueOf(config.getInitParameter("cacheTimeout"));
+		createCacheJedis();
+	}
+
+	protected Jedis createCacheJedis() {
+		return new Jedis(cacheHost, cachePort, cacheTimeout);
+	}
+
+	protected Jedis createSubJedis() {
+		return new Jedis(subHost, subPort, subTimeout);
 	}
 
 	private void pushWeiboReply(String quoteSenderId) {
-		Long repliedNumber = cacheJedis.incr("weiboReply " + quoteSenderId);
-		push("mine", quoteSenderId, "weiboReply new " + repliedNumber + "\n", false);
+		try {
+			long repliedNumber = cacheJedis.incr("weiboReply " + quoteSenderId);
+			push("mine", quoteSenderId, "weiboReply new " + repliedNumber + "\n", false);
+		} catch (JedisConnectionException e) {
+			this.reinitCacheJedis();
+		}
 
 	}
 
@@ -221,6 +251,48 @@ public class PushServlet extends HttpServlet {
 			}
 			synchronized (list) {
 				list.add(pushExecutor);
+			}
+		}
+	}
+
+	/**
+	 * reset sub jedis
+	 */
+	private void reinitSubJedis() {
+		if (this.resetSubJedisLock.tryLock()) {// do nothing if lock not free
+			this.resetSubJedisLock.lock();
+			try {
+				Jedis tmp = this.createSubJedis();
+				if (this.subJedis != null) {
+					this.subJedis.disconnect();
+				}
+				this.subJedis = tmp;
+				log.error("reinitSubJedis:" + this.subJedis);
+			} catch (Exception e) {
+				log.error("reinitSubJedis:", e);
+			} finally {
+				this.resetSubJedisLock.unlock();
+			}
+		}
+	}
+
+	/**
+	 * reset jedis
+	 */
+	private void reinitCacheJedis() {
+		if (this.resetCacheJedisLock.tryLock()) {// do nothing if lock not free
+			this.resetCacheJedisLock.lock();
+			try {
+				Jedis tmp = this.createCacheJedis();
+				if (this.cacheJedis != null) {
+					this.cacheJedis.disconnect();
+				}
+				this.cacheJedis = tmp;
+				log.error("reinitCacheJedis:" + this.cacheJedis);
+			} catch (Exception e) {
+				log.error("reinitCacheJedis:", e);
+			} finally {
+				this.resetCacheJedisLock.unlock();
 			}
 		}
 	}
