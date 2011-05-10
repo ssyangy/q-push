@@ -123,7 +123,7 @@ public class PushServlet extends HttpServlet {
 		cacheHost = config.getInitParameter("cacheHost");
 		cachePort = Integer.valueOf(config.getInitParameter("cachePort"));
 		cacheTimeout = Integer.valueOf(config.getInitParameter("cacheTimeout"));
-		createCacheJedis();
+		this.cacheJedis = createCacheJedis();
 	}
 
 	protected Jedis createCacheJedis() {
@@ -139,6 +139,7 @@ public class PushServlet extends HttpServlet {
 			long repliedNumber = cacheJedis.incr("weiboReply " + quoteSenderId);
 			push("mine", quoteSenderId, "weiboReply new " + repliedNumber + "\n", false);
 		} catch (JedisConnectionException e) {
+			log.error("", e);
 			this.reinitCacheJedis();
 		}
 
