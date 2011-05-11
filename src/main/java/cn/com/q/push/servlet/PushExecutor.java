@@ -3,12 +3,15 @@
  */
 package cn.com.q.push.servlet;
 
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import javax.servlet.AsyncContext;
+import javax.servlet.AsyncEvent;
+import javax.servlet.AsyncListener;
 
 import org.apache.log4j.Logger;
 
@@ -51,6 +54,30 @@ public class PushExecutor implements Runnable {
 	public PushExecutor(AsyncContext ctx, String cmd) {
 		this.cmd = cmd;
 		this.ctx = ctx;
+		this.ctx.addListener(new AsyncListener() {
+
+			@Override
+			public void onComplete(AsyncEvent event) throws IOException {
+				log.debug("onComplete");
+			}
+
+			@Override
+			public void onTimeout(AsyncEvent event) throws IOException {
+				log.debug("onTimeout");
+				end();
+			}
+
+			@Override
+			public void onError(AsyncEvent event) throws IOException {
+				log.debug("onError");
+				end();
+			}
+
+			@Override
+			public void onStartAsync(AsyncEvent event) throws IOException {
+				log.debug("onStartAsync");
+			}
+		});
 	}
 
 	public void end() {

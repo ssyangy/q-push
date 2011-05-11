@@ -13,8 +13,6 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import javax.servlet.AsyncContext;
-import javax.servlet.AsyncEvent;
-import javax.servlet.AsyncListener;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
@@ -34,6 +32,21 @@ import redis.clients.jedis.exceptions.JedisConnectionException;
  * 
  */
 public class PushServlet extends HttpServlet {
+	/**
+	 * 
+	 */
+	private static final String CHANNEL_WEIBO_REPLY = "weiboReply";
+
+	/**
+	 * 
+	 */
+	private static final String CHANNEL_MESSAGE = "message";
+
+	/**
+	 * 
+	 */
+	private static final String CMD_MINE = "mine";
+
 	private static final Logger log = Logger.getLogger(PushServlet.class);
 
 	private static final long serialVersionUID = 2917628173593609625L;
@@ -94,17 +107,20 @@ public class PushServlet extends HttpServlet {
 												String weiboSenderId = items[0];
 												// String weiboContent = items[2];
 												pushWeibo(weiboSenderId);
-											} else if ("weiboReply".equals(channel)) {
+											} else if (CHANNEL_WEIBO_REPLY.equals(channel)) {
 												String quoteSenderId = items[0];
 												// String replyContent = items[2];
 												pushWeiboReply(quoteSenderId);
+											} else if (CHANNEL_MESSAGE.equals(channel)) {
+												String receiverId = items[0];
+												pushMessage(receiverId);
 											}
 										} catch (Exception e) {
 											log.error("onMessage, message:" + message + ",channel:" + channel, e);
 										}
 									}
 
-								}, "weibo", "weiboReply", "message", "messageReply", "at");
+								}, "weibo", CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, "messageReply", "at");
 					} catch (JedisConnectionException e) {
 						log.error("JedisException", e);
 						reinitSubJedis();
@@ -136,13 +152,23 @@ public class PushServlet extends HttpServlet {
 
 	private void pushWeiboReply(String quoteSenderId) {
 		try {
-			long repliedNumber = cacheJedis.incr("weiboReply " + quoteSenderId);
-			push("mine", quoteSenderId, "weiboReply new " + repliedNumber + "\n", false);
+			long repliedNumber = cacheJedis.hincrBy(CHANNEL_WEIBO_REPLY, quoteSenderId, 1);
+			push(CMD_MINE, quoteSenderId, quoteSenderId + " weiboReply " + repliedNumber + "\n", false);
 		} catch (JedisConnectionException e) {
 			log.error("", e);
 			this.reinitCacheJedis();
 		}
 
+	}
+
+	private void pushMessage(String receiverId) {
+		try {
+			long repliedNumber = cacheJedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1);
+			push(CMD_MINE, receiverId, receiverId + " message " + repliedNumber + "\n", false);
+		} catch (JedisConnectionException e) {
+			log.error("", e);
+			this.reinitCacheJedis();
+		}
 	}
 
 	private void pushWeibo(String senderId) {
@@ -185,6 +211,9 @@ public class PushServlet extends HttpServlet {
 	protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
 		String[] peopleIds = StringUtils.split(req.getParameter("peopleIds"), ',');
 		String cmd = req.getParameter("cmd");
+		if (!(CMD_MINE.equals(cmd) || "weibo".equals(cmd))) {
+			return;
+		}
 		long aliveTime = 0;
 		String time = req.getParameter("aliveTime");
 		if (time == null) {
@@ -201,32 +230,16 @@ public class PushServlet extends HttpServlet {
 		final AsyncContext ctx = req.startAsync(req, resp);
 		ctx.setTimeout(aliveTime);
 		final PushExecutor exe = new PushExecutor(ctx, cmd);
-		// exe.setAliveTime(aliveTime);
-		ctx.addListener(new AsyncListener() {
-
-			@Override
-			public void onComplete(AsyncEvent event) throws IOException {
-				log.debug("onComplete");
-			}
-
-			@Override
-			public void onTimeout(AsyncEvent event) throws IOException {
-				log.debug("onTimeout");
-				exe.end();
-			}
-
-			@Override
-			public void onError(AsyncEvent event) throws IOException {
-				log.debug("onError");
-				exe.end();
-			}
-
-			@Override
-			public void onStartAsync(AsyncEvent event) throws IOException {
-				log.debug("onStartAsync");
-			}
-		});
 		subscribePeople(peopleIds, exe);
+		if (CMD_MINE.equals(cmd)) {
+			for (String peopleId : peopleIds) {
+				if (this.cacheJedis.hincrBy(CHANNEL_MESSAGE, peopleId, 0) > 0) {
+					pushMessage(peopleId);
+				} else if (this.cacheJedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0) > 0) {
+					pushWeiboReply(peopleId);
+				}
+			}
+		}
 		new Thread(exe).start();
 		log.debug("start executor:" + exe);
 	}
