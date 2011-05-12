@@ -9,8 +9,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 import javax.servlet.AsyncContext;
 import javax.servlet.ServletConfig;
@@ -19,11 +17,14 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.pool.impl.GenericObjectPool.Config;
 import org.apache.log4j.Logger;
 import org.springframework.util.CollectionUtils;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
 /**
@@ -32,6 +33,11 @@ import redis.clients.jedis.exceptions.JedisConnectionException;
  * 
  */
 public class PushServlet extends HttpServlet {
+	/**
+	 * 
+	 */
+	private static final String CHANNEL_WEIBO = "weibo";
+
 	/**
 	 * 
 	 */
@@ -55,31 +61,22 @@ public class PushServlet extends HttpServlet {
 
 	private static final int MIN_ALIVE_TIME = 30 * 1000;// min alive minute
 
-	private Jedis subJedis = null;
-	private Lock resetSubJedisLock = new ReentrantLock();
+	private JedisPool pool = null;
 
-	private Jedis cacheJedis = null;
-	private Lock resetCacheJedisLock = new ReentrantLock();
+	private String cacheHost;
 
-	String subHost;
+	private int cachePort;
 
-	int subPort;
+	private int cacheTimeout;
 
-	int subTimeout;
-
-	String cacheHost;
-
-	int cachePort;
-
-	int cacheTimeout;
+	private ConcurrentHashMap<String, List<PushExecutor>> executorMap = new ConcurrentHashMap<String, List<PushExecutor>>();
 
 	@Override
 	public void init() throws ServletException {
 		ServletConfig config = this.getServletConfig();
-		subHost = config.getInitParameter("subHost");
-		subPort = Integer.valueOf(config.getInitParameter("subPort"));
-		subTimeout = Integer.valueOf(config.getInitParameter("subTimeout"));
-		subJedis = createSubJedis();
+		final String subHost = config.getInitParameter("subHost");
+		final int subPort = Integer.valueOf(config.getInitParameter("subPort"));
+		final int subTimeout = Integer.valueOf(config.getInitParameter("subTimeout"));
 
 		final AtomicInteger tryTimes = new AtomicInteger();
 		new Thread(new Runnable() {
@@ -87,6 +84,7 @@ public class PushServlet extends HttpServlet {
 			@Override
 			public void run() {
 				while (true) {
+					Jedis subJedis = null;
 					try {
 						int tryTime = tryTimes.incrementAndGet();
 						if (tryTime != 1) {
@@ -95,7 +93,7 @@ public class PushServlet extends HttpServlet {
 								break;
 							}
 						}
-
+						subJedis = createSubJedis(subHost, subPort, subTimeout);
 						subJedis.subscribe(new JedisPubSubWraper() { // subscribe message and push message content to http clients
 
 									@Override
@@ -103,7 +101,7 @@ public class PushServlet extends HttpServlet {
 										try {
 											// message[peopleId content]
 											String[] items = StringUtils.split(message, " ", 2);
-											if ("weibo".equals(channel)) { // 1 identified weibo
+											if (CHANNEL_WEIBO.equals(channel)) { // 1 identified weibo
 												String weiboSenderId = items[0];
 												// String weiboContent = items[2];
 												pushWeibo(weiboSenderId);
@@ -120,17 +118,19 @@ public class PushServlet extends HttpServlet {
 										}
 									}
 
-								}, "weibo", CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, "messageReply", "at");
+								}, CHANNEL_WEIBO, CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, "messageReply", "at");
 					} catch (JedisConnectionException e) {
-						log.error("JedisException", e);
-						reinitSubJedis();
+						log.error("SubJedis will colsed and renew:", e);
+						if (null != subJedis) {
+							subJedis.disconnect();
+						}
 					} catch (Exception e) {
-						log.error("", e);
+						log.error("Other subscribe exception:", e);
 					}
 					try {
 						Thread.sleep(500);
 					} catch (InterruptedException e) {
-						log.error("", e);
+						log.error("Sleep interrupted:", e);
 					}
 				}
 			}
@@ -139,40 +139,42 @@ public class PushServlet extends HttpServlet {
 		cacheHost = config.getInitParameter("cacheHost");
 		cachePort = Integer.valueOf(config.getInitParameter("cachePort"));
 		cacheTimeout = Integer.valueOf(config.getInitParameter("cacheTimeout"));
-		this.cacheJedis = createCacheJedis();
+		this.pool = new JedisPool(new Config(), cacheHost, cachePort, cacheTimeout);
 	}
 
-	protected Jedis createCacheJedis() {
-		return new Jedis(cacheHost, cachePort, cacheTimeout);
-	}
-
-	protected Jedis createSubJedis() {
+	protected Jedis createSubJedis(String subHost, int subPort, int subTimeout) {
 		return new Jedis(subHost, subPort, subTimeout);
 	}
 
 	private void pushWeiboReply(String quoteSenderId) {
+		Jedis jedis = pool.getResource();
 		try {
-			long repliedNumber = cacheJedis.hincrBy(CHANNEL_WEIBO_REPLY, quoteSenderId, 1);
+			long repliedNumber = jedis.hincrBy(CHANNEL_WEIBO_REPLY, quoteSenderId, 1);
 			push(CMD_MINE, quoteSenderId, quoteSenderId + " weiboReply " + repliedNumber + "\n", false);
 		} catch (JedisConnectionException e) {
-			log.error("", e);
-			this.reinitCacheJedis();
+			log.error("pushWeiboReply", e);
+			jedis.disconnect();
+		} finally {
+			pool.returnResource(jedis);
 		}
 
 	}
 
 	private void pushMessage(String receiverId) {
+		Jedis jedis = pool.getResource();
 		try {
-			long repliedNumber = cacheJedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1);
+			long repliedNumber = jedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1);
 			push(CMD_MINE, receiverId, receiverId + " message " + repliedNumber + "\n", false);
 		} catch (JedisConnectionException e) {
-			log.error("", e);
-			this.reinitCacheJedis();
+			log.error("pushMessage", e);
+			jedis.disconnect();
+		} finally {
+			pool.returnResource(jedis);
 		}
 	}
 
 	private void pushWeibo(String senderId) {
-		push("weibo", senderId, "weibo new\n", true);
+		push(CHANNEL_WEIBO, senderId, "weibo new\n", true);
 	}
 
 	private void push(String cmd, String peopleId, String msg, boolean closeAfterPush) {
@@ -200,7 +202,10 @@ public class PushServlet extends HttpServlet {
 		}
 	}
 
-	private ConcurrentHashMap<String, List<PushExecutor>> executorMap = new ConcurrentHashMap<String, List<PushExecutor>>();
+	@Override
+	public void destroy() {
+		pool.destroy();
+	}
 
 	@Override
 	public void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
@@ -210,8 +215,11 @@ public class PushServlet extends HttpServlet {
 	@Override
 	protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
 		String[] peopleIds = StringUtils.split(req.getParameter("peopleIds"), ',');
+		if (ArrayUtils.isEmpty(peopleIds)) {
+			return;
+		}
 		String cmd = req.getParameter("cmd");
-		if (!(CMD_MINE.equals(cmd) || "weibo".equals(cmd))) {
+		if (!(CMD_MINE.equals(cmd) || CHANNEL_WEIBO.equals(cmd))) {
 			return;
 		}
 		long aliveTime = 0;
@@ -232,16 +240,28 @@ public class PushServlet extends HttpServlet {
 		final PushExecutor exe = new PushExecutor(ctx, cmd);
 		subscribePeople(peopleIds, exe);
 		if (CMD_MINE.equals(cmd)) {
-			for (String peopleId : peopleIds) {
-				if (this.cacheJedis.hincrBy(CHANNEL_MESSAGE, peopleId, 0) > 0) {
-					pushMessage(peopleId);
-				} else if (this.cacheJedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0) > 0) {
-					pushWeiboReply(peopleId);
-				}
-			}
+			pushWhenNewVisit(peopleIds);
 		}
 		new Thread(exe).start();
 		log.debug("start executor:" + exe);
+	}
+
+	private void pushWhenNewVisit(String[] peopleIds) {
+		Jedis jedis = pool.getResource();
+		try {
+			for (String peopleId : peopleIds) {
+				if (jedis.hincrBy(CHANNEL_MESSAGE, peopleId, 0) > 0) {
+					pushMessage(peopleId);
+				} else if (jedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0) > 0) {
+					pushWeiboReply(peopleId);
+				}
+			}
+		} catch (JedisConnectionException e) {
+			log.error("pushMessage", e);
+			jedis.disconnect();
+		} finally {
+			pool.returnResource(jedis);
+		}
 	}
 
 	/**
@@ -269,45 +289,4 @@ public class PushServlet extends HttpServlet {
 		}
 	}
 
-	/**
-	 * reset sub jedis
-	 */
-	private void reinitSubJedis() {
-		if (this.resetSubJedisLock.tryLock()) {// do nothing if lock not free
-			this.resetSubJedisLock.lock();
-			try {
-				Jedis tmp = this.createSubJedis();
-				if (this.subJedis != null) {
-					this.subJedis.disconnect();
-				}
-				this.subJedis = tmp;
-				log.error("reinitSubJedis:" + this.subJedis);
-			} catch (Exception e) {
-				log.error("reinitSubJedis:", e);
-			} finally {
-				this.resetSubJedisLock.unlock();
-			}
-		}
-	}
-
-	/**
-	 * reset jedis
-	 */
-	private void reinitCacheJedis() {
-		if (this.resetCacheJedisLock.tryLock()) {// do nothing if lock not free
-			this.resetCacheJedisLock.lock();
-			try {
-				Jedis tmp = this.createCacheJedis();
-				if (this.cacheJedis != null) {
-					this.cacheJedis.disconnect();
-				}
-				this.cacheJedis = tmp;
-				log.error("reinitCacheJedis:" + this.cacheJedis);
-			} catch (Exception e) {
-				log.error("reinitCacheJedis:", e);
-			} finally {
-				this.resetCacheJedisLock.unlock();
-			}
-		}
-	}
 }
