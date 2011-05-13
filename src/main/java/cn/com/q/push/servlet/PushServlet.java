@@ -36,6 +36,16 @@ public class PushServlet extends HttpServlet {
 	/**
 	 * 
 	 */
+	private static final String RESP_END = "\n";
+
+	/**
+	 * 
+	 */
+	private static final String RESP_SPLIT = " ";
+
+	/**
+	 * 
+	 */
 	private static final String CHANNEL_WEIBO = "weibo";
 
 	/**
@@ -47,6 +57,11 @@ public class PushServlet extends HttpServlet {
 	 * 
 	 */
 	private static final String CHANNEL_MESSAGE = "message";
+
+	/**
+	 * 
+	 */
+	private static final String CHANNEL_AT = "at";
 
 	/**
 	 * 
@@ -108,17 +123,17 @@ public class PushServlet extends HttpServlet {
 											} else if (CHANNEL_WEIBO_REPLY.equals(channel)) {
 												String quoteSenderId = items[0];
 												// String replyContent = items[2];
-												pushWeiboReply(quoteSenderId);
+												pushWeiboReply(quoteSenderId, true, null);
 											} else if (CHANNEL_MESSAGE.equals(channel)) {
 												String receiverId = items[0];
-												pushMessage(receiverId);
+												pushMessage(receiverId, true, null);
 											}
 										} catch (Exception e) {
 											log.error("onMessage, message:" + message + ",channel:" + channel, e);
 										}
 									}
 
-								}, CHANNEL_WEIBO, CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, "messageReply", "at");
+								}, CHANNEL_WEIBO, CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, CHANNEL_AT);
 					} catch (JedisConnectionException e) {
 						log.error("SubJedis will colsed and renew:", e);
 						if (null != subJedis) {
@@ -146,13 +161,13 @@ public class PushServlet extends HttpServlet {
 		return new Jedis(subHost, subPort, subTimeout);
 	}
 
-	private void pushWeiboReply(String quoteSenderId) {
+	private void pushWeiboReply(String quoteSenderId, boolean needIncr, Long newWeiboReplyNum) {
 		Jedis jedis = pool.getResource();
 		try {
-			long repliedNumber = jedis.hincrBy(CHANNEL_WEIBO_REPLY, quoteSenderId, 1);
-			push(CMD_MINE, quoteSenderId, quoteSenderId + " weiboReply " + repliedNumber + "\n", false);
+			long repliedNumber = needIncr ? jedis.hincrBy(CHANNEL_WEIBO_REPLY, quoteSenderId, 1) : newWeiboReplyNum;
+			push(CMD_MINE, quoteSenderId, quoteSenderId + RESP_SPLIT + CHANNEL_WEIBO_REPLY + RESP_SPLIT + repliedNumber + RESP_END, false);
 		} catch (JedisConnectionException e) {
-			log.error("pushWeiboReply", e);
+			log.error(CHANNEL_WEIBO_REPLY, e);
 			jedis.disconnect();
 		} finally {
 			pool.returnResource(jedis);
@@ -160,13 +175,13 @@ public class PushServlet extends HttpServlet {
 
 	}
 
-	private void pushMessage(String receiverId) {
+	private void pushMessage(String receiverId, boolean needIncr, Long newMessageNum) {
 		Jedis jedis = pool.getResource();
 		try {
-			long repliedNumber = jedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1);
-			push(CMD_MINE, receiverId, receiverId + " message " + repliedNumber + "\n", false);
+			long repliedNumber = needIncr ? jedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1) : newMessageNum;
+			push(CMD_MINE, receiverId, receiverId + RESP_SPLIT + CHANNEL_MESSAGE + RESP_SPLIT + repliedNumber + RESP_END, false);
 		} catch (JedisConnectionException e) {
-			log.error("pushMessage", e);
+			log.error(CHANNEL_MESSAGE, e);
 			jedis.disconnect();
 		} finally {
 			pool.returnResource(jedis);
@@ -174,7 +189,7 @@ public class PushServlet extends HttpServlet {
 	}
 
 	private void pushWeibo(String senderId) {
-		push(CHANNEL_WEIBO, senderId, "weibo new\n", true);
+		push(CHANNEL_WEIBO, senderId, CHANNEL_WEIBO + RESP_SPLIT + "new" + RESP_END, true);
 	}
 
 	private void push(String cmd, String peopleId, String msg, boolean closeAfterPush) {
@@ -250,14 +265,18 @@ public class PushServlet extends HttpServlet {
 		Jedis jedis = pool.getResource();
 		try {
 			for (String peopleId : peopleIds) {
-				if (jedis.hincrBy(CHANNEL_MESSAGE, peopleId, 0) > 0) {
-					pushMessage(peopleId);
-				} else if (jedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0) > 0) {
-					pushWeiboReply(peopleId);
+				Long newMessageNum = jedis.hincrBy(CHANNEL_MESSAGE, peopleId, 0);
+				if (newMessageNum > 0) {
+					pushMessage(peopleId, false, newMessageNum);
+				} else {
+					Long newWeiboReplyNum = jedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0);
+					if (newWeiboReplyNum > 0) {
+						pushWeiboReply(peopleId, false, newWeiboReplyNum);
+					}
 				}
 			}
 		} catch (JedisConnectionException e) {
-			log.error("pushMessage", e);
+			log.error("pushWhenNewVisit", e);
 			jedis.disconnect();
 		} finally {
 			pool.returnResource(jedis);
