@@ -125,8 +125,8 @@ public class PushServlet extends HttpServlet {
 												// String replyContent = items[2];
 												pushWeiboReply(quoteSenderId, true, null);
 											} else if (CHANNEL_MESSAGE.equals(channel)) {
-												String receiverId = items[0];
-												pushMessage(receiverId, true, null);
+												String receiverIds = items[0];
+												pushMessage(receiverIds, true, null);
 											}
 										} catch (Exception e) {
 											log.error("onMessage, message:" + message + ",channel:" + channel, e);
@@ -175,11 +175,14 @@ public class PushServlet extends HttpServlet {
 
 	}
 
-	private void pushMessage(String receiverId, boolean needIncr, Long newMessageNum) {
+	private void pushMessage(String receiverIds, boolean needIncr, Long newMessageNum) {
 		Jedis jedis = pool.getResource();
+		String[] idArray = StringUtils.split(receiverIds, ',');
 		try {
-			long repliedNumber = needIncr ? jedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1) : newMessageNum;
-			push(CMD_MINE, receiverId, receiverId + RESP_SPLIT + CHANNEL_MESSAGE + RESP_SPLIT + repliedNumber + RESP_END, false);
+			for (String receiverId : idArray) {
+				long repliedNumber = needIncr ? jedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1) : newMessageNum;
+				push(CMD_MINE, receiverId, receiverId + RESP_SPLIT + CHANNEL_MESSAGE + RESP_SPLIT + repliedNumber + RESP_END, false);
+			}
 		} catch (JedisConnectionException e) {
 			log.error(CHANNEL_MESSAGE, e);
 			jedis.disconnect();
