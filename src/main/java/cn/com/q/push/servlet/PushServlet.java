@@ -271,11 +271,10 @@ public class PushServlet extends HttpServlet {
 				Long newMessageNum = jedis.hincrBy(CHANNEL_MESSAGE, peopleId, 0);
 				if (newMessageNum > 0) {
 					pushMessage(peopleId, false, newMessageNum);
-				} else {
-					Long newWeiboReplyNum = jedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0);
-					if (newWeiboReplyNum > 0) {
-						pushWeiboReply(peopleId, false, newWeiboReplyNum);
-					}
+				}
+				Long newWeiboReplyNum = jedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0);
+				if (newWeiboReplyNum > 0) {
+					pushWeiboReply(peopleId, false, newWeiboReplyNum);
 				}
 			}
 		} catch (JedisConnectionException e) {
