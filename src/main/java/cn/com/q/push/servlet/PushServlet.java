@@ -44,6 +44,11 @@ public class PushServlet extends HttpServlet {
 	private static final String RESP_SPLIT = " ";
 
 	/**
+	 * group new weibo channel
+	 */
+	private static final String CHANNEL_GROUP = "group";
+
+	/**
 	 * 
 	 */
 	private static final String CHANNEL_WEIBO = "weibo";
@@ -114,9 +119,12 @@ public class PushServlet extends HttpServlet {
 									@Override
 									public void onMessage(String channel, String message) {
 										try {
-											// message[peopleId content]
+											// message[Id/Ids content]
 											String[] items = StringUtils.split(message, " ", 2);
-											if (CHANNEL_WEIBO.equals(channel)) { // 1 identified weibo
+											if (CHANNEL_GROUP.equals(channel)) {
+												String groupId = items[0];
+												pushGroupWeibo(groupId);
+											} else if (CHANNEL_WEIBO.equals(channel)) { // 1 identified weibo
 												String weiboSenderId = items[0];
 												// String weiboContent = items[2];
 												pushWeibo(weiboSenderId);
@@ -133,7 +141,7 @@ public class PushServlet extends HttpServlet {
 										}
 									}
 
-								}, CHANNEL_WEIBO, CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, CHANNEL_AT);
+								}, CHANNEL_GROUP, CHANNEL_WEIBO, CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, CHANNEL_AT);
 					} catch (JedisConnectionException e) {
 						log.error("SubJedis will colsed and renew:", e);
 						if (null != subJedis) {
@@ -195,6 +203,10 @@ public class PushServlet extends HttpServlet {
 		push(CHANNEL_WEIBO, senderId, CHANNEL_WEIBO + RESP_SPLIT + "new" + RESP_END, true);
 	}
 
+	private void pushGroupWeibo(String groupId) {
+		push(CHANNEL_GROUP, groupId, CHANNEL_GROUP + RESP_SPLIT + "new" + RESP_END, true);
+	}
+
 	private void push(String cmd, String peopleId, String msg, boolean closeAfterPush) {
 		List<PushExecutor> list = executorMap.get(peopleId);
 		if (CollectionUtils.isEmpty(list)) {
@@ -232,25 +244,20 @@ public class PushServlet extends HttpServlet {
 
 	@Override
 	protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+		String cmd = req.getParameter("cmd");
+		if (!(CMD_MINE.equals(cmd) || CHANNEL_WEIBO.equals(cmd) || CHANNEL_GROUP.equals(cmd))) {
+			return;
+		}
 		String[] peopleIds = StringUtils.split(req.getParameter("peopleIds"), ',');
 		if (ArrayUtils.isEmpty(peopleIds)) {
 			return;
 		}
-		String cmd = req.getParameter("cmd");
-		if (!(CMD_MINE.equals(cmd) || CHANNEL_WEIBO.equals(cmd))) {
-			return;
-		}
-		long aliveTime = 0;
 		String time = req.getParameter("aliveTime");
-		if (time == null) {
+		long aliveTime = Long.valueOf(time); // use min alive time by default
+		if (aliveTime < MIN_ALIVE_TIME) { // alive time can't be less than min alive time
 			aliveTime = MIN_ALIVE_TIME;
-		} else {
-			aliveTime = Long.valueOf(time);
-			if (aliveTime < 0) {
-				aliveTime = MIN_ALIVE_TIME;
-			} else if (aliveTime > MAX_ALIVE_TIME) {
-				aliveTime = MAX_ALIVE_TIME;
-			}
+		} else if (aliveTime > MAX_ALIVE_TIME) { // alive time can't be greater than max alive time
+			aliveTime = MAX_ALIVE_TIME;
 		}
 		resp.setContentType("application/json;charset=UTF-8");
 		final AsyncContext ctx = req.startAsync(req, resp);
