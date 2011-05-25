@@ -175,7 +175,7 @@ public class PushServlet extends HttpServlet {
 
 		@Override
 		public String toString() {
-			return "{\"id\"=\"" + id + "\", \"type\"=\"" + type + "\", \"content\"=\"" + content + "\"}";
+			return "{\"id\":\"" + id + "\", \"type\":\"" + type + "\", \"content\":\"" + content + "\"}";
 		}
 
 	}
