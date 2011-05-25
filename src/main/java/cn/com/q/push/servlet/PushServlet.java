@@ -274,10 +274,12 @@ public class PushServlet extends HttpServlet {
 		} else if (aliveTime > MAX_ALIVE_TIME) { // alive time can't be greater than max alive time
 			aliveTime = MAX_ALIVE_TIME;
 		}
+		String callback = req.getParameter("callback");
 		//resp.setContentType("application/json;charset=UTF-8");
 		final AsyncContext ctx = req.startAsync(req, resp);
 		ctx.setTimeout(aliveTime);
 		final PushExecutor exe = new PushExecutor(ctx, cmd);
+		exe.setCallback(callback);
 		subscribePeople(ids, exe);
 		new Thread(exe).start();
 		log.debug("start executor:" + exe);
