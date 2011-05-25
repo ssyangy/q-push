@@ -175,7 +175,7 @@ public class PushServlet extends HttpServlet {
 
 		@Override
 		public String toString() {
-			return "{id=\"" + id + "\", type=\"" + type + "\", content=\"" + content + "\"}";
+			return "{\"id\"=\"" + id + "\", \"type\"=\"" + type + "\", \"content\"=\"" + content + "\"}";
 		}
 
 	}
@@ -238,7 +238,7 @@ public class PushServlet extends HttpServlet {
 					continue;
 				}
 				if (exe.getCmd().equals(cmd)) {
-					exe.putMsg(pr.toString() + "\n");
+					exe.putMsg(pr.toString());
 					if (closeAfterPush) {
 						exe.end(); // ended immediately after push
 					}
@@ -279,11 +279,11 @@ public class PushServlet extends HttpServlet {
 		ctx.setTimeout(aliveTime);
 		final PushExecutor exe = new PushExecutor(ctx, cmd);
 		subscribePeople(ids, exe);
+		new Thread(exe).start();
+		log.debug("start executor:" + exe);
 		if (CMD_MINE.equals(cmd)) {
 			pushWhenNewVisit(ids);
 		}
-		new Thread(exe).start();
-		log.debug("start executor:" + exe);
 	}
 
 	private void pushWhenNewVisit(String[] peopleIds) {

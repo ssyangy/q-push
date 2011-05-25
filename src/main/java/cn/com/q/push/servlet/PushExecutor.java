@@ -95,8 +95,10 @@ public class PushExecutor implements Runnable {
 	public void run() {
 		long startTime = System.currentTimeMillis();
 		PrintWriter out = null;
+		boolean hasPrevItem = false;
 		try {
 			out = ctx.getResponse().getWriter();
+			out.write('[');
 			Object msg = null;
 			while (true) {
 				if (aliveTime > 0 && System.currentTimeMillis() - startTime > aliveTime) {
@@ -112,17 +114,22 @@ public class PushExecutor implements Runnable {
 					break;
 				}
 				if (msg != null) {
+					if (hasPrevItem) {
+						out.write(",\n");
+					}
+					out.write((String) msg);
 					if (log.isDebugEnabled()) {
 						log.debug("write msg:" + msg);
 					}
-					out.write((String) msg);
 					out.flush();
+					hasPrevItem = true;
 				}
 			}
 		} catch (Exception e) {
 			log.debug("out closed", e);
 		} finally {
 			try {
+				out.write(']');
 				out.close();
 			} catch (Exception e) {
 			}
