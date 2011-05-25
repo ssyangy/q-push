@@ -39,6 +39,8 @@ public class PushExecutor implements Runnable {
 
 	private String cmd;
 
+	private String callback;
+
 	public boolean isEnded() {
 		return this.closed == true;
 	}
@@ -49,6 +51,10 @@ public class PushExecutor implements Runnable {
 
 	public String getCmd() {
 		return this.cmd;
+	}
+
+	public void setCallback(String callback) {
+		this.callback = callback;
 	}
 
 	public PushExecutor(AsyncContext ctx, String cmd) {
@@ -98,6 +104,10 @@ public class PushExecutor implements Runnable {
 		boolean hasPrevItem = false;
 		try {
 			out = ctx.getResponse().getWriter();
+			if (callback != null) {
+				out.write(callback);
+				out.write('(');
+			}
 			out.write('[');
 			Object msg = null;
 			while (true) {
@@ -130,6 +140,9 @@ public class PushExecutor implements Runnable {
 		} finally {
 			try {
 				out.write(']');
+				if (callback != null) {
+					out.write(");");
+				}
 				out.close();
 			} catch (Exception e) {
 			}
@@ -144,4 +157,5 @@ public class PushExecutor implements Runnable {
 			log.debug("executor closed:" + this);
 		}
 	}
+
 }
