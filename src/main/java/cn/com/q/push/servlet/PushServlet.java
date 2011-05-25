@@ -33,15 +33,6 @@ import redis.clients.jedis.exceptions.JedisConnectionException;
  * 
  */
 public class PushServlet extends HttpServlet {
-	/**
-	 * 
-	 */
-	private static final String RESP_END = "\n";
-
-	/**
-	 * 
-	 */
-	private static final String RESP_SPLIT = " ";
 
 	/**
 	 * group new weibo channel
@@ -79,7 +70,7 @@ public class PushServlet extends HttpServlet {
 
 	private static final int MAX_ALIVE_TIME = 5 * 60 * 1000;// alive five minute
 
-	private static final int MIN_ALIVE_TIME = 30 * 1000;// min alive minute
+	private static final int MIN_ALIVE_TIME = 1 * 1000;// min alive minute
 
 	private JedisPool pool = null;
 
@@ -169,11 +160,32 @@ public class PushServlet extends HttpServlet {
 		return new Jedis(subHost, subPort, subTimeout);
 	}
 
+	private static class PushResult {
+		String id;
+
+		String type;
+
+		String content;
+
+		PushResult(String id, String type, String content) {
+			this.id = id;
+			this.type = type;
+			this.content = content;
+		}
+
+		@Override
+		public String toString() {
+			return "{id=\"" + id + "\", type=\"" + type + "\", content=\"" + content + "\"}";
+		}
+
+	}
+
 	private void pushWeiboReply(String quoteSenderId, boolean needIncr, Long newWeiboReplyNum) {
 		Jedis jedis = pool.getResource();
 		try {
 			long repliedNumber = needIncr ? jedis.hincrBy(CHANNEL_WEIBO_REPLY, quoteSenderId, 1) : newWeiboReplyNum;
-			push(CMD_MINE, quoteSenderId, quoteSenderId + RESP_SPLIT + CHANNEL_WEIBO_REPLY + RESP_SPLIT + repliedNumber + RESP_END, false);
+			PushResult pr = new PushResult(quoteSenderId, CHANNEL_WEIBO_REPLY, "" + repliedNumber);
+			push(CMD_MINE, quoteSenderId, pr, false);
 		} catch (JedisConnectionException e) {
 			log.error(CHANNEL_WEIBO_REPLY, e);
 			jedis.disconnect();
@@ -189,7 +201,8 @@ public class PushServlet extends HttpServlet {
 		try {
 			for (String receiverId : idArray) {
 				long repliedNumber = needIncr ? jedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1) : newMessageNum;
-				push(CMD_MINE, receiverId, receiverId + RESP_SPLIT + CHANNEL_MESSAGE + RESP_SPLIT + repliedNumber + RESP_END, false);
+				PushResult pr = new PushResult(receiverId, CHANNEL_MESSAGE, "" + repliedNumber);
+				push(CMD_MINE, receiverId, pr, false);
 			}
 		} catch (JedisConnectionException e) {
 			log.error(CHANNEL_MESSAGE, e);
@@ -200,15 +213,17 @@ public class PushServlet extends HttpServlet {
 	}
 
 	private void pushWeibo(String senderId) {
-		push(CHANNEL_WEIBO, senderId, CHANNEL_WEIBO + RESP_SPLIT + "new" + RESP_END, true);
+		PushResult pr = new PushResult(senderId, CHANNEL_WEIBO, "new");
+		push(CHANNEL_WEIBO, senderId, pr, true);
 	}
 
 	private void pushGroupWeibo(String groupId) {
-		push(CHANNEL_GROUP, groupId, CHANNEL_GROUP + RESP_SPLIT + "new" + RESP_END, true);
+		PushResult pr = new PushResult(groupId, CHANNEL_GROUP, "new");
+		push(CHANNEL_GROUP, groupId, pr, true);
 	}
 
-	private void push(String cmd, String peopleId, String msg, boolean closeAfterPush) {
-		List<PushExecutor> list = executorMap.get(peopleId);
+	private void push(String cmd, String id, PushResult pr, boolean closeAfterPush) {
+		List<PushExecutor> list = executorMap.get(id);
 		if (CollectionUtils.isEmpty(list)) {
 			return;
 		}
@@ -223,7 +238,7 @@ public class PushServlet extends HttpServlet {
 					continue;
 				}
 				if (exe.getCmd().equals(cmd)) {
-					exe.putMsg(msg);
+					exe.putMsg(pr.toString() + "\n");
 					if (closeAfterPush) {
 						exe.end(); // ended immediately after push
 					}
@@ -248,8 +263,8 @@ public class PushServlet extends HttpServlet {
 		if (!(CMD_MINE.equals(cmd) || CHANNEL_WEIBO.equals(cmd) || CHANNEL_GROUP.equals(cmd))) {
 			return;
 		}
-		String[] peopleIds = StringUtils.split(req.getParameter("peopleIds"), ',');
-		if (ArrayUtils.isEmpty(peopleIds)) {
+		String[] ids = StringUtils.split(req.getParameter("ids"), ',');
+		if (ArrayUtils.isEmpty(ids)) {
 			return;
 		}
 		String time = req.getParameter("aliveTime");
@@ -263,9 +278,9 @@ public class PushServlet extends HttpServlet {
 		final AsyncContext ctx = req.startAsync(req, resp);
 		ctx.setTimeout(aliveTime);
 		final PushExecutor exe = new PushExecutor(ctx, cmd);
-		subscribePeople(peopleIds, exe);
+		subscribePeople(ids, exe);
 		if (CMD_MINE.equals(cmd)) {
-			pushWhenNewVisit(peopleIds);
+			pushWhenNewVisit(ids);
 		}
 		new Thread(exe).start();
 		log.debug("start executor:" + exe);
