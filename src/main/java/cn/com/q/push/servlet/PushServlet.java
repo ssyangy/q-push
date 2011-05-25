@@ -274,7 +274,7 @@ public class PushServlet extends HttpServlet {
 		} else if (aliveTime > MAX_ALIVE_TIME) { // alive time can't be greater than max alive time
 			aliveTime = MAX_ALIVE_TIME;
 		}
-		resp.setContentType("application/json;charset=UTF-8");
+		//resp.setContentType("application/json;charset=UTF-8");
 		final AsyncContext ctx = req.startAsync(req, resp);
 		ctx.setTimeout(aliveTime);
 		final PushExecutor exe = new PushExecutor(ctx, cmd);
