@@ -62,6 +62,11 @@ public class PushServlet extends HttpServlet {
 	/**
 	 * 
 	 */
+	private static final String CHANNEL_FO = "fo";
+
+	/**
+	 * 
+	 */
 	private static final String CMD_MINE = "mine";
 
 	private static final Logger log = Logger.getLogger(PushServlet.class);
@@ -126,13 +131,19 @@ public class PushServlet extends HttpServlet {
 											} else if (CHANNEL_MESSAGE.equals(channel)) {
 												String receiverIds = items[0];
 												pushMessage(receiverIds, true, null);
+											} else if (CHANNEL_AT.equals(channel)) {
+												String atPeopleId = items[0];
+												pushAt(atPeopleId, true, null);
+											} else if (CHANNEL_FO.equals(channel)) {
+												String foPeopleId = items[0];
+												pushFo(foPeopleId, true, null);
 											}
 										} catch (Exception e) {
 											log.error("onMessage, message:" + message + ",channel:" + channel, e);
 										}
 									}
 
-								}, CHANNEL_GROUP, CHANNEL_WEIBO, CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, CHANNEL_AT);
+								}, CHANNEL_GROUP, CHANNEL_WEIBO, CHANNEL_WEIBO_REPLY, CHANNEL_MESSAGE, CHANNEL_AT, CHANNEL_FO);
 					} catch (JedisConnectionException e) {
 						log.error("SubJedis will colsed and renew:", e);
 						if (null != subJedis) {
@@ -181,18 +192,7 @@ public class PushServlet extends HttpServlet {
 	}
 
 	private void pushWeiboReply(String quoteSenderId, boolean needIncr, Long newWeiboReplyNum) {
-		Jedis jedis = pool.getResource();
-		try {
-			long repliedNumber = needIncr ? jedis.hincrBy(CHANNEL_WEIBO_REPLY, quoteSenderId, 1) : newWeiboReplyNum;
-			PushResult pr = new PushResult(quoteSenderId, CHANNEL_WEIBO_REPLY, "" + repliedNumber);
-			push(CMD_MINE, quoteSenderId, pr, false);
-		} catch (JedisConnectionException e) {
-			log.error(CHANNEL_WEIBO_REPLY, e);
-			jedis.disconnect();
-		} finally {
-			pool.returnResource(jedis);
-		}
-
+		this.pushPeopleNumberNotify(CHANNEL_WEIBO_REPLY, quoteSenderId, needIncr, newWeiboReplyNum);
 	}
 
 	private void pushMessage(String receiverIds, boolean needIncr, Long newMessageNum) {
@@ -210,6 +210,29 @@ public class PushServlet extends HttpServlet {
 		} finally {
 			pool.returnResource(jedis);
 		}
+	}
+
+	private void pushFo(String foPeopleId, boolean needIncr, Long foPeopleNum) {
+		this.pushPeopleNumberNotify(CHANNEL_FO, foPeopleId, needIncr, foPeopleNum);
+	}
+
+	private void pushAt(String atPeopleId, boolean needIncr, Long atPeopleNum) {
+		this.pushPeopleNumberNotify(CHANNEL_AT, atPeopleId, needIncr, atPeopleNum);
+	}
+
+	private void pushPeopleNumberNotify(String channel, String peopleId, boolean needIncr, Long notifyNum) {
+		Jedis jedis = pool.getResource();
+		try {
+			long number = needIncr ? jedis.hincrBy(channel, peopleId, 1) : notifyNum;
+			PushResult pr = new PushResult(peopleId, channel, "" + number);
+			push(CMD_MINE, peopleId, pr, false);
+		} catch (JedisConnectionException e) {
+			log.error(channel, e);
+			jedis.disconnect();
+		} finally {
+			pool.returnResource(jedis);
+		}
+
 	}
 
 	private void pushWeibo(String senderId) {
@@ -275,7 +298,7 @@ public class PushServlet extends HttpServlet {
 			aliveTime = MAX_ALIVE_TIME;
 		}
 		String callback = req.getParameter("callback");
-		//resp.setContentType("application/json;charset=UTF-8");
+		// resp.setContentType("application/json;charset=UTF-8");
 		final AsyncContext ctx = req.startAsync(req, resp);
 		ctx.setTimeout(aliveTime);
 		final PushExecutor exe = new PushExecutor(ctx, cmd);
@@ -299,6 +322,14 @@ public class PushServlet extends HttpServlet {
 				Long newWeiboReplyNum = jedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0);
 				if (newWeiboReplyNum > 0) {
 					pushWeiboReply(peopleId, false, newWeiboReplyNum);
+				}
+				Long newFoNum = jedis.hincrBy(CHANNEL_FO, peopleId, 0);
+				if (newFoNum > 0) {
+					pushFo(peopleId, false, newFoNum);
+				}
+				Long newAtNum = jedis.hincrBy(CHANNEL_AT, peopleId, 0);
+				if (newAtNum > 0) {
+					pushAt(peopleId, false, newAtNum);
 				}
 			}
 		} catch (JedisConnectionException e) {
