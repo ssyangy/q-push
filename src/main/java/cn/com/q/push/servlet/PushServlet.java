@@ -127,16 +127,19 @@ public class PushServlet extends HttpServlet {
 											} else if (CHANNEL_WEIBO_REPLY.equals(channel)) {
 												String quoteSenderId = items[0];
 												// String replyContent = items[2];
-												pushWeiboReply(quoteSenderId, true, null);
+												pushWeiboReplyAndIncr(quoteSenderId);
 											} else if (CHANNEL_MESSAGE.equals(channel)) {
 												String receiverIds = items[0];
-												pushMessage(receiverIds, true, null);
+												String[] idArray = StringUtils.split(receiverIds, ',');
+												for (String receiverId : idArray) {
+													pushMessageAndIncr(receiverId);
+												}
 											} else if (CHANNEL_AT.equals(channel)) {
 												String atPeopleId = items[0];
-												pushAt(atPeopleId, true, null);
+												pushAtAndIncr(atPeopleId);
 											} else if (CHANNEL_FO.equals(channel)) {
 												String foPeopleId = items[0];
-												pushFo(foPeopleId, true, null);
+												pushFoAndIncr(foPeopleId);
 											}
 										} catch (Exception e) {
 											log.error("onMessage, message:" + message + ",channel:" + channel, e);
@@ -184,6 +187,10 @@ public class PushServlet extends HttpServlet {
 			this.content = content;
 		}
 
+		PushResult(String id, String type, long content) {
+			this(id, type, "" + content);
+		}
+
 		@Override
 		public String toString() {
 			return "{\"id\":\"" + id + "\", \"type\":\"" + type + "\", \"content\":\"" + content + "\"}";
@@ -191,41 +198,45 @@ public class PushServlet extends HttpServlet {
 
 	}
 
-	private void pushWeiboReply(String quoteSenderId, boolean needIncr, Long newWeiboReplyNum) {
-		this.pushPeopleNumberNotify(CHANNEL_WEIBO_REPLY, quoteSenderId, needIncr, newWeiboReplyNum);
+	private void pushMessageAndIncr(String receiverId) {
+		this.pushPeopleNumberNotify(null, CHANNEL_MESSAGE, receiverId, true);
 	}
 
-	private void pushMessage(String receiverIds, boolean needIncr, Long newMessageNum) {
+	private void pushMessage(PushExecutor exe, String receiverId) {
+		this.pushPeopleNumberNotify(exe, CHANNEL_MESSAGE, receiverId, false);
+	}
+
+	private void pushWeiboReplyAndIncr(String quoteSenderId) {
+		this.pushPeopleNumberNotify(null, CHANNEL_WEIBO_REPLY, quoteSenderId, true);
+	}
+
+	private void pushWeiboReply(PushExecutor exe, String quoteSenderId) {
+		this.pushPeopleNumberNotify(exe, CHANNEL_WEIBO_REPLY, quoteSenderId, false);
+	}
+
+	private void pushFoAndIncr(String foPeopleId) {
+		this.pushPeopleNumberNotify(null, CHANNEL_FO, foPeopleId, true);
+	}
+
+	private void pushFo(PushExecutor exe, String foPeopleId) {
+		this.pushPeopleNumberNotify(exe, CHANNEL_FO, foPeopleId, false);
+	}
+
+	private void pushAtAndIncr(String atPeopleId) {
+		this.pushPeopleNumberNotify(null, CHANNEL_AT, atPeopleId, true);
+	}
+
+	private void pushAt(PushExecutor exe, String atPeopleId) {
+		this.pushPeopleNumberNotify(exe, CHANNEL_AT, atPeopleId, false);
+	}
+
+	private void pushPeopleNumberNotify(PushExecutor exe, String channel, String peopleId, boolean needIncr) {
 		Jedis jedis = pool.getResource();
-		String[] idArray = StringUtils.split(receiverIds, ',');
+		int incr = needIncr ? 1 : 0;
 		try {
-			for (String receiverId : idArray) {
-				long repliedNumber = needIncr ? jedis.hincrBy(CHANNEL_MESSAGE, receiverId, 1) : newMessageNum;
-				PushResult pr = new PushResult(receiverId, CHANNEL_MESSAGE, "" + repliedNumber);
-				push(CMD_MINE, receiverId, pr, false);
-			}
-		} catch (JedisConnectionException e) {
-			log.error(CHANNEL_MESSAGE, e);
-			jedis.disconnect();
-		} finally {
-			pool.returnResource(jedis);
-		}
-	}
-
-	private void pushFo(String foPeopleId, boolean needIncr, Long foPeopleNum) {
-		this.pushPeopleNumberNotify(CHANNEL_FO, foPeopleId, needIncr, foPeopleNum);
-	}
-
-	private void pushAt(String atPeopleId, boolean needIncr, Long atPeopleNum) {
-		this.pushPeopleNumberNotify(CHANNEL_AT, atPeopleId, needIncr, atPeopleNum);
-	}
-
-	private void pushPeopleNumberNotify(String channel, String peopleId, boolean needIncr, Long notifyNum) {
-		Jedis jedis = pool.getResource();
-		try {
-			long number = needIncr ? jedis.hincrBy(channel, peopleId, 1) : notifyNum;
-			PushResult pr = new PushResult(peopleId, channel, "" + number);
-			push(CMD_MINE, peopleId, pr, false);
+			long number = jedis.hincrBy(channel, peopleId, incr);
+			PushResult pr = getPeopleNumberNotifyResult(channel, peopleId, number);
+			push(exe, CMD_MINE, peopleId, pr, false);
 		} catch (JedisConnectionException e) {
 			log.error(channel, e);
 			jedis.disconnect();
@@ -235,30 +246,42 @@ public class PushServlet extends HttpServlet {
 
 	}
 
+	private PushResult getPeopleNumberNotifyResult(String channel, String peopleId, long number) {
+		PushResult pr = new PushResult(peopleId, channel, number);
+		return pr;
+	}
+
 	private void pushWeibo(String senderId) {
 		PushResult pr = new PushResult(senderId, CHANNEL_WEIBO, "new");
-		push(CHANNEL_WEIBO, senderId, pr, true);
+		push(null, CHANNEL_WEIBO, senderId, pr, true);
 	}
 
 	private void pushGroupWeibo(String groupId) {
 		PushResult pr = new PushResult(groupId, CHANNEL_GROUP, "new");
-		push(CHANNEL_GROUP, groupId, pr, true);
+		push(null, CHANNEL_GROUP, groupId, pr, true);
 	}
 
-	private void push(String cmd, String id, PushResult pr, boolean closeAfterPush) {
-		List<PushExecutor> list = executorMap.get(id);
-		if (CollectionUtils.isEmpty(list)) {
-			return;
-		}
-		synchronized (list) {
-			for (Iterator<PushExecutor> iter = list.iterator(); iter.hasNext();) {
-				PushExecutor exe = iter.next();
-				if (exe.isEnded()) {
-					iter.remove();
-					if (log.isDebugEnabled()) {
-						log.debug("remove executor:" + exe);
+	private void push(PushExecutor pushExecutor, String cmd, String id, PushResult pr, boolean closeAfterPush) {
+		if (pushExecutor != null && !pushExecutor.isEnded()) {
+			pushExecutor.putMsg(pr.toString());
+			if (closeAfterPush) {
+				pushExecutor.end(); // ended immediately after push
+			}
+		} else {
+			List<PushExecutor> list = executorMap.get(id);
+			if (!CollectionUtils.isEmpty(list)) {
+				PushExecutor exe = null;
+				synchronized (list) {
+					for (Iterator<PushExecutor> iter = list.iterator(); iter.hasNext();) {
+						exe = iter.next();
+						if (exe.isEnded()) {
+							iter.remove();
+							if (log.isDebugEnabled()) {
+								log.debug("remove executor:" + exe);
+							}
+							continue;
+						}
 					}
-					continue;
 				}
 				if (exe.getCmd().equals(cmd)) {
 					exe.putMsg(pr.toString());
@@ -307,36 +330,16 @@ public class PushServlet extends HttpServlet {
 		new Thread(exe).start();
 		log.debug("start executor:" + exe);
 		if (CMD_MINE.equals(cmd)) {
-			pushWhenNewVisit(ids);
+			pushWhenNewVisit(ids, exe);
 		}
 	}
 
-	private void pushWhenNewVisit(String[] peopleIds) {
-		Jedis jedis = pool.getResource();
-		try {
-			for (String peopleId : peopleIds) {
-				Long newMessageNum = jedis.hincrBy(CHANNEL_MESSAGE, peopleId, 0);
-				if (newMessageNum > 0) {
-					pushMessage(peopleId, false, newMessageNum);
-				}
-				Long newWeiboReplyNum = jedis.hincrBy(CHANNEL_WEIBO_REPLY, peopleId, 0);
-				if (newWeiboReplyNum > 0) {
-					pushWeiboReply(peopleId, false, newWeiboReplyNum);
-				}
-				Long newFoNum = jedis.hincrBy(CHANNEL_FO, peopleId, 0);
-				if (newFoNum > 0) {
-					pushFo(peopleId, false, newFoNum);
-				}
-				Long newAtNum = jedis.hincrBy(CHANNEL_AT, peopleId, 0);
-				if (newAtNum > 0) {
-					pushAt(peopleId, false, newAtNum);
-				}
-			}
-		} catch (JedisConnectionException e) {
-			log.error("pushWhenNewVisit", e);
-			jedis.disconnect();
-		} finally {
-			pool.returnResource(jedis);
+	private void pushWhenNewVisit(String[] peopleIds, PushExecutor exe) {
+		for (String peopleId : peopleIds) {
+			this.pushMessage(exe, peopleId);
+			this.pushWeiboReply(exe, peopleId);
+			this.pushFo(exe, peopleId);
+			this.pushAt(exe, peopleId);
 		}
 	}
 
